@@ -8,6 +8,12 @@ namespace FTS_Test.Models.DB
 {
     public class InsertValue
     {
+        public InsertValue(string columnName, string strValue)
+        {
+            ColumnName = columnName;
+            StrValue = strValue;
+        }
+
         public string ColumnName { get; set; }
         public string StrValue { get; set; }
     }

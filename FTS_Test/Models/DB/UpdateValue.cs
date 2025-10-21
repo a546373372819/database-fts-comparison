@@ -8,6 +8,11 @@ namespace FTS_Test.Models.DB
 {
     internal class UpdateValue
     {
+        public UpdateValue(string columnName, string strValue)
+        {
+            ColumnName = columnName;
+            StrValue = strValue;
+        }
         public string ColumnName { get; set; }
         public string StrValue { get; set; }
     }

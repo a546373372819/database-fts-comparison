@@ -3,6 +3,7 @@ using FTS_Test.Models.Enum;
 using Microsoft.Data.Sqlite;
 using System;
 using System.Collections.Generic;
+using System.Diagnostics;
 using System.Drawing;
 using System.Linq;
 using System.Text;
@@ -14,9 +15,96 @@ namespace FTS_Test.Services
     public class DBHelper
     {
 
-       
+    
+        /// <summary>
+        /// Runs the Python SQLite → PostgreSQL migration script synchronously.
+        /// </summary>
+        /// <param name="pythonScriptPath">Full path to migrate_sqlite_to_postgres.py</param>
+        /// <param name="sqliteDbPath">Full path to the SQLite database file</param>
+        /// <param name="pythonExePath">Optional: Path to the Python executable (default = "python")</param>
+        /// <returns>True if migration succeeded, false otherwise.</returns>
+        public static bool RunMigrationScript(string sqliteDbPath="./Resources/dms_model_medium.db3")
+        {
+                string pythonExePath = "python";
+                string pythonScriptPath = "./Scripts/sqlite_to_postgres.py";
+            if (!File.Exists(pythonScriptPath))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($" Python script not found at: {pythonScriptPath}");
+                Console.ResetColor();
+                return false;
+            }
 
-        public static void CreateFTS5(string dbName)
+            if (!File.Exists(sqliteDbPath))
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($" SQLite database not found at: {sqliteDbPath}");
+                Console.ResetColor();
+                return false;
+            }
+
+            // Build the command line arguments
+            string arguments = $"\"{pythonScriptPath}\" --sqlite \"{sqliteDbPath}\"";
+
+            var psi = new ProcessStartInfo
+            {
+                FileName = pythonExePath,
+                Arguments = arguments,
+                RedirectStandardOutput = true,
+                RedirectStandardError = true,
+                UseShellExecute = false,
+                CreateNoWindow = true
+            };
+
+            using var process = new Process { StartInfo = psi };
+
+            Console.ForegroundColor = ConsoleColor.Yellow;
+            Console.WriteLine(" Starting SQLite → PostgreSQL migration...");
+            Console.ResetColor();
+
+            process.Start();
+
+            // Stream stdout and stderr synchronously
+            while (!process.StandardOutput.EndOfStream)
+            {
+                string line = process.StandardOutput.ReadLine();
+                if (!string.IsNullOrEmpty(line))
+                    Console.WriteLine(line);
+            }
+
+            while (!process.StandardError.EndOfStream)
+            {
+                string line = process.StandardError.ReadLine();
+                if (!string.IsNullOrEmpty(line))
+                {
+                    Console.ForegroundColor = ConsoleColor.Red;
+                    Console.WriteLine(line);
+                    Console.ResetColor();
+                }
+            }
+
+            process.WaitForExit();
+
+            if (process.ExitCode == 0)
+            {
+                Console.ForegroundColor = ConsoleColor.Green;
+                Console.WriteLine(" Migration completed successfully!");
+                Console.ResetColor();
+                return true;
+            }
+            else
+            {
+                Console.ForegroundColor = ConsoleColor.Red;
+                Console.WriteLine($" Migration failed with exit code {process.ExitCode}");
+                Console.ResetColor();
+                return false;
+            }
+        }
+    
+
+
+
+    public static void CreateFTS5(string dbName)
         {
             using (var connection = new SqliteConnection("Data Source=Resources/"+dbName))
             {
@@ -51,18 +139,7 @@ namespace FTS_Test.Services
 
                 var updates = new List<UpdateObject>
                 {
-                    /*new UpdateObject
-                   {
-                       Gid = 1,
-                       ColumnNames= new[]
-                       {
-                           "IDOBJ_NAME"
-                       },
-                       Values = new []
-                       {
-                           new UpdateValue { ColumnName = "IDOBJ_NAME", StrValue = "Hoy" },
-                       }
-                   }*/
+                   
                 };
 
                 var gidsForDelete = new List<long>
@@ -101,9 +178,9 @@ namespace FTS_Test.Services
                         Gid = id_count += 1,
                         Values = new[]
                         {
-                            new InsertValue { ColumnName = "IDOBJ_NAME", StrValue = AddRandomLetters(sampleWords1[0]) },
-                            new InsertValue { ColumnName = "IDOBJ_CUSTOMID", StrValue = AddRandomLetters(sampleWords1[0]) },
-                            new InsertValue { ColumnName = "IDOBJ_ALIAS", StrValue = AddRandomLetters(sampleWords1[0]) }
+                            new InsertValue ("IDOBJ_NAME", AddRandomLetters(sampleWords1[0])),
+                            new InsertValue("IDOBJ_CUSTOMID", AddRandomLetters(sampleWords1[0])),
+                            new InsertValue ("IDOBJ_ALIAS", AddRandomLetters(sampleWords1[0]))
                         }
                     });
                 }
@@ -115,9 +192,9 @@ namespace FTS_Test.Services
                         Gid = id_count += 1,
                         Values = new[]
                         {
-                            new InsertValue { ColumnName = "IDOBJ_NAME", StrValue = AddRandomLetters(sampleWords1[1]) },
-                            new InsertValue { ColumnName = "IDOBJ_CUSTOMID", StrValue = AddRandomLetters(sampleWords1[0]) },
-                            new InsertValue { ColumnName = "IDOBJ_ALIAS", StrValue = AddRandomLetters(sampleWords1[1]) }
+                            new InsertValue ("IDOBJ_NAME", AddRandomLetters(sampleWords1[1])),
+                            new InsertValue ("IDOBJ_CUSTOMID", AddRandomLetters(sampleWords1[0])),
+                            new InsertValue ("IDOBJ_ALIAS", AddRandomLetters(sampleWords1[1]))
                         }
                     });
                 }
@@ -129,9 +206,9 @@ namespace FTS_Test.Services
                         Gid = id_count += 1,
                         Values = new[]
                         {
-                            new InsertValue { ColumnName = "IDOBJ_NAME", StrValue = AddRandomLetters(sampleWords1[2]) },
-                            new InsertValue { ColumnName = "IDOBJ_CUSTOMID", StrValue = AddRandomLetters(sampleWords1[1]) },
-                            new InsertValue { ColumnName = "IDOBJ_ALIAS", StrValue = AddRandomLetters(sampleWords1[2]) }
+                            new InsertValue ("IDOBJ_NAME", AddRandomLetters(sampleWords1[2])),
+                            new InsertValue ("IDOBJ_CUSTOMID", AddRandomLetters(sampleWords1[1])),
+                            new InsertValue ("IDOBJ_ALIAS", AddRandomLetters(sampleWords1[2]))
                         }
                     });
                 }
@@ -147,9 +224,9 @@ namespace FTS_Test.Services
                         Gid = id_count += 1,
                         Values = new[]
                         {
-                            new InsertValue { ColumnName = "IDOBJ_NAME", StrValue = AddRandomLetters(sampleWords2[0]) },
-                            new InsertValue { ColumnName = "IDOBJ_CUSTOMID", StrValue = AddRandomLetters(sampleWords2[0]) },
-                            new InsertValue { ColumnName = "IDOBJ_ALIAS", StrValue = AddRandomLetters(sampleWords2[0]) }
+                            new InsertValue ("IDOBJ_NAME", AddRandomLetters(sampleWords2[0])),
+                            new InsertValue ("IDOBJ_CUSTOMID", AddRandomLetters(sampleWords2[0])),
+                            new InsertValue ("IDOBJ_ALIAS", AddRandomLetters(sampleWords2[0]))
                         }
                     });
                 }
@@ -165,9 +242,9 @@ namespace FTS_Test.Services
                         Gid = id_count += 1,
                         Values = new[]
                         {
-                            new InsertValue { ColumnName = "IDOBJ_NAME", StrValue = AddRandomLetters(sampleWords2[1]) },
-                            new InsertValue { ColumnName = "IDOBJ_CUSTOMID", StrValue = AddRandomLetters(sampleWords2[1]) },
-                            new InsertValue { ColumnName = "IDOBJ_ALIAS", StrValue = AddRandomLetters(sampleWords2[1]) }
+                            new InsertValue ("IDOBJ_NAME", AddRandomLetters(sampleWords2[1])),
+                            new InsertValue ("IDOBJ_CUSTOMID", AddRandomLetters(sampleWords2[1])),
+                            new InsertValue ("IDOBJ_ALIAS", AddRandomLetters(sampleWords2[1]))
                         }
                     });
                 }
@@ -182,7 +259,7 @@ namespace FTS_Test.Services
         {
             int maxPadding = 5;
             Random rng = new Random();
-            List<string> words = [];
+            List<string> words = new List<string>();
             words.Add(word);
             for (int i = 0; i < rng.Next(0, maxWords); i++)
             {

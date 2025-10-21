@@ -1,6 +1,7 @@
 ﻿using FTS_Test.Models.DB;
 using FTS_Test.Models.Enum;
 using Microsoft.Data.Sqlite;
+using MongoDB.Driver.Core.Configuration;
 using Npgsql;
 using System;
 using System.Collections.Generic;
@@ -19,167 +20,102 @@ namespace FTS_Test.Services
             DatabaseSource = databaseSource;
         }
 
-        public List<long> FullTextSearch(
-    DMSType type,
-    ModelCode property,
-    string filter,
-    FilterOperation operation,
-    int returnValuesLimit,
-    bool searchIndividualWords,
-    bool orderByRelevance)
+
+
+        public void UpdateFTS4Tables(
+    List<InsertObject> inserts,
+    List<UpdateObject> updates,
+    List<long> gidsForDelete,
+    string[] columnNames)
         {
             using var connection = new NpgsqlConnection(DatabaseSource);
             connection.Open();
 
-            List<long> globalIdsResult = new List<long>();
-            string[] filterTokens = filter.ToLower()
-                .Split(Config.Instance.Separators.ToCharArray(), StringSplitOptions.RemoveEmptyEntries);
+            using var transaction = connection.BeginTransaction();
 
-            if (!filterTokens.Any())
-                return globalIdsResult;
-
-            using var command = new NpgsqlCommand();
-            command.Connection = connection;
-
-            StringBuilder queryAdditionalFilter = new StringBuilder();
-            StringBuilder query = new StringBuilder();
-            string column = property == 0 ? "idobj_text_fts" : property.ToString(); // pick column name
-
-            // Type filter
-            string queryTypeAdding = type != 0 ? $"AND type_id = {(ushort)type}" : string.Empty;
-
-            switch (operation)
+            try
             {
-                case FilterOperation.Eq:
-                    queryAdditionalFilter.Append($@" AND ""{property}"" = @filterEq COLLATE NOCASE");
-
-                    StringBuilder queryMatchEqual = new StringBuilder();
-                    queryMatchEqual.Append(string.Join(" AND ", filterTokens.Select(t => $"\"{t}\"")));
-                    command.Parameters.AddWithValue("@filter", queryMatchEqual);
-                    command.Parameters.AddWithValue("@filterEq", filter);
-
-                    break;
-                case FilterOperation.Like:
-                case FilterOperation.LikeMC:
-                    queryAdditionalFilter.Append($@"""{property}"" LIKE @filterLike");
-
-                    command.Parameters.AddWithValue("@filter", filter.Replace("%", "*"));
-                    command.Parameters.AddWithValue("@filterLike", filter.Replace("*", "%"));
-                    break;
-                default:
-                    if (searchIndividualWords)
+                if (inserts != null && inserts.Count > 0)
+                {
+                    foreach (var ins in inserts)
                     {
-                        StringBuilder queryMatchDefault = new StringBuilder();
+                        var sbCols = new StringBuilder("gid, ");
+                        var sbVals = new StringBuilder("@gid, ");
 
-                        queryMatchDefault.Append(string.Join(" AND ", filterTokens.Select(t => $"\"{t}\"")));
-                        queryMatchDefault.Insert(queryMatchDefault.Length - 1, "*");
+                        for (int i = 0; i < columnNames.Length; i++)
+                        {
+                            sbCols.Append(columnNames[i]);
+                            sbVals.Append($"@val{i}");
 
-                        command.Parameters.AddWithValue("@filter", queryMatchDefault.ToString());
+                            if (i < columnNames.Length - 1)
+                            {
+                                sbCols.Append(", ");
+                                sbVals.Append(", ");
+                            }
+                        }
+
+                        var sql = $"INSERT INTO public.idobj_text_fts5 ({sbCols}) VALUES ({sbVals});";
+                        using var cmd = new NpgsqlCommand(sql, connection, transaction);
+
+                        cmd.Parameters.AddWithValue("gid", ins.Gid);
+
+                        for (int i = 0; i < columnNames.Length; i++)
+                        {
+                            var value = ins.Values[i].StrValue ?? (object)DBNull.Value;
+                            cmd.Parameters.AddWithValue($"val{i}", value);
+                        }
+
+                        cmd.ExecuteNonQuery();
                     }
-                    else
+                }
+
+                if (updates != null && updates.Count > 0)
+                {
+                    foreach (var upd in updates)
                     {
-                        command.Parameters.AddWithValue("@filter", filter + "*");
+                        var sb = new StringBuilder();
+                        sb.Append("UPDATE public.idobj_text_fts5 SET ");
+
+                        for (int i = 0; i < columnNames.Length; i++)
+                        {
+                            sb.Append($"{columnNames[i]} = @val{i}");
+                            if (i < columnNames.Length - 1)
+                                sb.Append(", ");
+                        }
+
+                        sb.Append(" WHERE gid = @gid;");
+
+                        using var cmd = new NpgsqlCommand(sb.ToString(), connection, transaction);
+
+                        for (int i = 0; i < columnNames.Length; i++)
+                        {
+                            var value = upd.Values[i].StrValue ?? (object)DBNull.Value;
+                            cmd.Parameters.AddWithValue($"val{i}", value);
+                        }
+
+                        cmd.Parameters.AddWithValue("gid", upd.Gid);
+                        cmd.ExecuteNonQuery();
                     }
-                    break;
-            }
-
-
-
-            if (type != 0)
-            {
-                queryTypeAdding = $"AND type_id = {(ushort)type}";
-            }
-
-
-            string queryProperties = string.Empty;
-
-            if (operation == FilterOperation.Like || operation == FilterOperation.LikeMC)
-            {
-                query.AppendLine($@"
-				    SELECT gid
-				    FROM idobj_text_fts ITF LEFT JOIN idobj_text_indexed ITI ON ITF.rowid = ITI.rowid 
-				    WHERE ( {queryTypeAdding}  {queryAdditionalFilter})");
-            }
-            else
-                    {
-
-
-                if (searchIndividualWords)
-                {
-                    queryProperties = property == 0 ? string.Join(", ", Config.Instance.columnNames.Select(c => $@"""{c.ToString()}""")) : $@"""{property}""";
-                    string queryMatchRange = property == 0 ? "idobj_text_fts" : $@"""{property}""";
-
-                    query.AppendLine($@"
-				SELECT gid
-				FROM idobj_text_fts ITF LEFT JOIN idobj_text_indexed ITI ON ITF.rowid = ITI.rowid 
-				WHERE ({queryMatchRange} MATCH @filter {queryTypeAdding})");
-                }
-                else
-                {
-                    query.AppendLine($@"
-				SELECT gid
-				FROM idobj_text_fts ITF LEFT JOIN idobj_text_indexed ITI ON ITF.rowid = ITI.rowid 
-				WHERE (""{property}"" MATCH @filter {queryTypeAdding} {queryAdditionalFilter})");
-                }
-            }
-
-
-            if (orderByRelevance)
-            {
-                List<string> filterTokensParams = new List<string>(filterTokens.Length);
-
-                for (int i = 0; i < filterTokens.Length; i++)
-                {
-                    string filterTokenI = "@filterTokens" + i;
-
-                    filterTokensParams.Add(filterTokenI);
-                    command.Parameters.AddWithValue(filterTokenI, filterTokens[i]);
                 }
 
-                if (searchIndividualWords)
+                if (gidsForDelete != null && gidsForDelete.Count > 0)
                 {
-                    query.AppendLine($@"ORDER BY rank({1}, {filterTokens.Length}, {string.Join(", ", filterTokensParams)}, {queryProperties}) DESC");
+                    using var deleteCmd = new NpgsqlCommand(
+                        "DELETE FROM public.idobj_text_fts5 WHERE gid = ANY(@gids);",
+                        connection,
+                        transaction
+                    );
+                    deleteCmd.Parameters.AddWithValue("gids", gidsForDelete);
+                    deleteCmd.ExecuteNonQuery();
                 }
-                else
-                {
-                    query.AppendLine($@"ORDER BY rank({1}, {filterTokens.Length}, {string.Join(", ", filterTokensParams)}, ""{property}"") DESC");
-                }
+
+                transaction.Commit();
             }
-
-
-            StringBuilder finalQuery = new StringBuilder();
-
-            if (operation == FilterOperation.LikeMC)
+            catch
             {
-                finalQuery.Append("PRAGMA case_sensitive_like = TRUE; ");
+                transaction.Rollback();
+                throw;
             }
-
-            else if (operation == FilterOperation.Like)
-            {
-                finalQuery.Append("PRAGMA case_sensitive_like = FALSE; ");
-            }
-
-            finalQuery.Append(query);
-
-            if (returnValuesLimit > 0)
-            {
-                finalQuery.Append($" LIMIT {returnValuesLimit}");
-            }
-
-
-            command.CommandText = finalQuery.ToString();
-
-            Console.WriteLine(command.CommandText);
-
-
-            using var reader = command.ExecuteReader();
-            while (reader.Read())
-            {
-                long globalId = reader.GetInt64(reader.GetOrdinal("gid"));
-                globalIdsResult.Add(globalId);
-            }
-
-            return globalIdsResult;
         }
 
 
@@ -279,6 +215,11 @@ namespace FTS_Test.Services
 
 
         public void UpdateDatabase(List<InsertObject> inserts, List<UpdateObject> updates, List<long> gidsForDelete, string[] columnNames)
+        {
+            throw new NotImplementedException();
+        }
+
+        public List<long> FullTextSearch(DMSType type, ModelCode property, string filter, FilterOperation operation, int returnValuesLimit, bool searchIndividualWords, bool orderByRelevance)
         {
             throw new NotImplementedException();
         }

@@ -20,53 +20,104 @@ namespace FTS_Test
         static void Main(string[] args)
         {
 
-            //DBHelper.CreateFTS5("dms_model_big.db3");
-            //DBHelper.CreateTestData("dms_model_big.db3", TestDataSize.LARGE);
-
-
-
-            /*FTService ftService = new FTService();
-
-            Stopwatch stopwatch = new Stopwatch();
-            stopwatch.Start();
-            var res = ftService.FullTextSearch(0, ModelCode.idobj_text_fts, "car sfs", FilterOperation.FTS, 100000000, true, false);
-            Console.WriteLine(res.Count() + "," + stopwatch.Elapsed);
-
-            stopwatch.Restart();
-            var res2 = ftService.FullTextSearch5(0, ModelCode.idobj_text_fts, "car sfs", FilterOperation.FTS, 100000000, true, false);
-            Console.WriteLine(res2.Count() + "," + stopwatch.Elapsed);
-
-
-            WriteResults(res);
-            Console.WriteLine("\n\n");
-            WriteResults(res2);*/
-
-            //RunSQLiteDBStressTest();
-            RunDatabaseComparison();
-
-            /*string connString = "Host=localhost;Port=2345;Username=postgres;Password=admin;Database=mydb";
-            
-            using var conn = new NpgsqlConnection(connString);
-            conn.Open();
-
-            // Query to get all tables in the 'public' schema
-            string sql = @"
-            SELECT table_name
-            FROM information_schema.tables
-            WHERE table_schema = 'public'
-            ORDER BY table_name;
-        ";
-
-            using var cmd = new NpgsqlCommand(sql, conn);
-            using var reader = cmd.ExecuteReader();
-
-            Console.WriteLine("Tables in database:");
-            while (reader.Read())
-            {
-                Console.WriteLine(reader.GetString(0));
-            }*/
+            //DBHelper.CreateFTS5("dms_model_medium.db3");
+            //DBHelper.CreateTestData("dms_model_medium.db3",TestDataSize.MEDIUM);
+            //RunPostgresComparison();
+            //RunPostgresDBOperationsComparison();
+            //DBHelper.RunMigrationScript();
+            RunPostgresComparison();
 
         }
+
+        static async void RunPostgresDBOperationsComparison()
+        {
+
+            PostgresDbService postgresService = new PostgresDbService("Host=localhost;Port=5432;Username=postgres;Password=admin;Database=postgres;Pooling=true;MinPoolSize=1;MaxPoolSize=20;");
+            SQLiteDbService sqliteService = new SQLiteDbService("dms_model_medium.db3");
+
+
+            string[] columns = { "idobj_name", "idobj_customid", "idobj_alias" };
+
+            int count = 2_000_000;
+            Console.WriteLine($"Generating {count:N0} records...");
+
+
+            //Insert
+            var inserts = new List<InsertObject>(count);
+            for (int i = 0; i < count; i++)
+            {
+                inserts.Add(new InsertObject
+                {
+                    Gid = i + 8000000,
+                    Values = new InsertValue[]
+                    {
+                        new InsertValue("idobj_name",$"Name_{i}"),
+                        new InsertValue("idobj_customid",$"CustomId_{i}"),
+                        new InsertValue("idobj_alias",$"Alias_{i}")
+
+                    }
+                });
+            }
+
+            Console.WriteLine("Starting postgres insert benchmark...");
+            var swInsert = Stopwatch.StartNew();
+             postgresService.UpdateFTS4Tables(inserts, new List<UpdateObject>(), new List<long>(), columns);
+            swInsert.Stop();
+            Console.WriteLine($"Inserted into Postgres {count:N0} rows in {swInsert.Elapsed}.");
+
+            Console.WriteLine("Starting postgres insert benchmark...");
+            var swInsertSqlite = Stopwatch.StartNew();
+            sqliteService.UpdateFTS4Tables(inserts, new List<UpdateObject>(), new List<long>(), columns);
+            swInsertSqlite.Stop();
+            Console.WriteLine($"Inserted into Sqlite {count:N0} rows in {swInsertSqlite.Elapsed}.");
+
+            //Update
+            Console.WriteLine("Starting update benchmark...");
+            var updates = new List<UpdateObject>(count);
+            for (int i = 0; i < count; i++)
+            {
+                updates.Add(new UpdateObject
+                {
+                    Gid = i + 8000000,
+                    Values = new UpdateValue[]
+                    {
+                        new UpdateValue("idobj_name",$"UpdatedName_{i}"),
+                        new UpdateValue("idobj_customid",$"UpdatedCustomId_{i}"),
+                        new UpdateValue("idobj_alias",$"UpdatedAlias_{i}")
+
+                    }
+                });
+            }
+
+            var swUpdate = Stopwatch.StartNew();
+            postgresService.UpdateFTS4Tables(new List<InsertObject>(), updates, new List<long>(), columns);
+            swUpdate.Stop();
+            Console.WriteLine($"Updated Postgres {count:N0} rows in {swUpdate.Elapsed}.");
+
+            var sqliteUpdate = Stopwatch.StartNew();
+            sqliteService.UpdateFTS4Tables(new List<InsertObject>(), updates, new List<long>(), columns);
+            sqliteUpdate.Stop();
+            Console.WriteLine($"Updated Sqlite {count:N0} rows in {sqliteUpdate.Elapsed}.");
+
+            // 4 Delete phase
+            Console.WriteLine("Starting delete benchmark...");
+            var gids = new List<long>(count);
+            for (int i = 8000000; i < count; i++)
+                gids.Add(i + 1);
+
+            var swDelete = Stopwatch.StartNew();
+            postgresService.UpdateFTS4Tables(new List<InsertObject>(), new List<UpdateObject>(), gids, columns);
+            swDelete.Stop();
+            Console.WriteLine($"Deleted Postgres {count:N0} rows in {swDelete.Elapsed}.");
+
+            var sqiteDelete = Stopwatch.StartNew();
+            sqliteService.UpdateFTS4Tables(new List<InsertObject>(), new List<UpdateObject>(), gids, columns);
+            sqiteDelete.Stop();
+            Console.WriteLine($"Deleted Sqlite {count:N0} rows in {sqiteDelete.Elapsed}.");
+
+            Console.WriteLine("\nBenchmark completed successfully!");
+        }
+    
 
         public static void WriteResults(List<long> res)
         {
@@ -80,13 +131,15 @@ namespace FTS_Test
             }
         }
 
-        public static void RunDatabaseComparison()
+        
+
+        public static void RunPostgresComparison()
         {
             List<SearchResultLog> results = new List<SearchResultLog>();
             List<DBSearch> DbSearches = CreateDbInputs();
 
 
-            IDbService ftServicePostgresMedium = new PostgresDbService("Host=localhost;Port=2345;Username=postgres;Password=admin;Database=mydb;Pooling=true;MinPoolSize=1;MaxPoolSize=20;");
+            IDbService ftServicePostgresMedium = new PostgresDbService("Host=localhost;Port=5432;Username=postgres;Password=admin;Database=dms_model;Pooling=true;MinPoolSize=1;MaxPoolSize=20;");
             IDbService ftServiceSqliteMedium = new SQLiteDbService("dms_model_medium.db3");
 
 
@@ -132,18 +185,18 @@ namespace FTS_Test
 
                     stopwatch.Restart();
 
-                    if(dbSearch.Property== ModelCode.idobj_text_fts)
+                    if (dbSearch.Property == ModelCode.idobj_text_fts)
                     {
                         dbSearch.Property = ModelCode.search_vector;
                     }
-                
+
                     PostgresRes = ftServicePostgresMedium.FullTextSearch5(0, dbSearch.Property, dbSearch.SearchInput, dbSearch.SearchMethod, 100000000, dbSearch.SearchIndividuallWords, false);
                     PostgresTime = stopwatch.Elapsed.TotalMilliseconds;
 
                     SqliteTimeAvg += SqliteTime;
                     PostgresTimeAvg += PostgresTime;
 
-  
+
 
                 }
 
@@ -165,6 +218,7 @@ namespace FTS_Test
 
         }
 
+        
         public static void RunSQLiteDBStressTest()
         {
 
